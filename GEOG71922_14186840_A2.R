@@ -42,7 +42,7 @@ beetle_env$LCBD=function_lcbd(beetle_comm)
 #print(table(beetle_env$Landcover,useNA="ifany"))
 
 
-#broadleaf cover extraction (250m, 500m, 1000m)
+#broadleaf and grassland cover extraction (250m, 500m, 1000m)
 scales=c(250,500,1000)
 
 #250m buffer extraction
@@ -50,27 +50,34 @@ buffer_250=st_buffer(beetle_sf, dist=250)
 lcm_250=terra::extract(lcm_raster, vect(buffer_250))
 names(lcm_250)[2]= "LC_Class"
 land_250=lcm_250 %>% group_by(ID) %>% 
-  summarise(Broadleaf_250m=mean(LC_Class==1, na.rm = TRUE))
+  summarise(Broadleaf_250m=mean(LC_Class==1, na.rm = TRUE),
+            Grassland_250m=mean(LC_Class==4, na.rm=TRUE))
 
 #500m buffer extraction
 buffer_500 = st_buffer(beetle_sf, dist=500)
 lcm_500 = terra::extract(lcm_raster, vect(buffer_500))
 names(lcm_500)[2] = "LC_Class"
 land_500= lcm_500 %>% group_by(ID) %>% 
-  summarise(Broadleaf_500m = mean(LC_Class==1, na.rm = TRUE))
+  summarise(Broadleaf_500m = mean(LC_Class==1, na.rm = TRUE),
+            Grassland_500m=mean(LC_Class==4, na.rm=TRUE))
 
 #1000m buffer extraction
 buffer_1000=st_buffer(beetle_sf, dist=1000)
 lcm_1000=terra::extract(lcm_raster, vect(buffer_1000))
 names(lcm_1000)[2]= "LC_Class"
 land_1000= lcm_1000 %>% group_by(ID) %>% 
-  summarise(Broadleaf_1000m= mean(LC_Class==1,na.rm=TRUE))
+  summarise(Broadleaf_1000m= mean(LC_Class==1,na.rm=TRUE),
+            Grassland_1000m=mean(LC_Class==4, na.rm=TRUE))
 
-#merge extracted metrics safely
-beetle_env$Broadleaf_250m= land_250$Broadleaf_250m
-beetle_env$Broadleaf_500m= land_500$Broadleaf_500m
-beetle_env$Broadleaf_1000m= land_1000$Broadleaf_1000m
+#merge extracted metrics back to environmental data
+beetle_env$ID=1:nrow(beetle_env)
+beetle_env=beetle_env %>%
+  left_join(land_250, by="ID") %>%
+  left_join(land_500, by="ID") %>%
+  left_join(land_1000, by="ID")
 
-#test results for scaling effects
-print(head(beetle_env[, c("Sites", "Broadleaf_250m", "Broadleaf_500m", "Broadleaf_1000m")]))
-print(colMeans(beetle_env[, c("Broadleaf_250m", "Broadleaf_500m", "Broadleaf_1000m")]))
+#test results
+print(head(beetle_env[, c("Sites", "Broadleaf_250m", "Broadleaf_500m", "Broadleaf_1000m",
+                          "Grassland_250m", "Grassland_500m", "Grassland_1000m")]))
+print(colMeans(beetle_env[, c("Broadleaf_250m", "Broadleaf_500m", "Broadleaf_1000m",
+                              "Grassland_250m", "Grassland_500m", "Grassland_1000m")]))
