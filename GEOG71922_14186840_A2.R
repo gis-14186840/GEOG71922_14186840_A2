@@ -10,8 +10,13 @@ library(dplyr)
 
 #load data
 lcm_raster=rast("LCMUK_2000.tif")
-beetle_env=read.csv("scot_beetle_env.csv")
+
+#remove exported row number column
+beetle_env=read.csv("scot_beetle_env.csv",row.names=1)
 beetle_comm=read.csv("scot_beetle_community.csv",row.names=1)
+
+#keep only species columns
+beetle_comm=beetle_comm %>% select(starts_with("sp"))
 
 #create spatial points object 
 beetle_sf=st_as_sf(beetle_env,coords=c("X","Y"),crs=27700)
@@ -32,10 +37,9 @@ function_lcbd=function(spe1){
   for(i in 1:ncol(spe1)){
     sp.i=spe1[,i]
     col.i_mean=mean(sp.i)
-    ss_mat[,i]=sapply(sp.i,function(x) (x-col.i_mean)^2)
-  }
-  return(rowSums(ss_mat)/sum(ss_mat))
-}
+    ss_mat[,i]=sapply(sp.i,function(x) (x-col.i_mean)^2)}
+  return(rowSums(ss_mat)/sum(ss_mat))}
+
 beetle_env$LCBD=function_lcbd(beetle_comm)
 
 #test result
@@ -77,7 +81,35 @@ beetle_env=beetle_env %>%
   left_join(land_1000, by="ID")
 
 #test results
-print(head(beetle_env[, c("Sites", "Broadleaf_250m", "Broadleaf_500m", "Broadleaf_1000m",
-                          "Grassland_250m", "Grassland_500m", "Grassland_1000m")]))
-print(colMeans(beetle_env[, c("Broadleaf_250m", "Broadleaf_500m", "Broadleaf_1000m",
-                              "Grassland_250m", "Grassland_500m", "Grassland_1000m")]))
+#print(head(beetle_env[,c("Sites", "Broadleaf_250m", "Broadleaf_500m", "Broadleaf_1000m","Grassland_250m", "Grassland_500m", "Grassland_1000m")]))
+#print(colMeans(beetle_env[,c("Broadleaf_250m", "Broadleaf_500m", "Broadleaf_1000m","Grassland_250m", "Grassland_500m", "Grassland_1000m")]))
+
+#compare scales for landscape variables
+
+#hellinger-transform the community data
+comm_hel=decostand(beetle_comm, method="hellinger")
+
+#create an dataframe
+scale_compare=data.frame(Scale=paste0(scales, "m"), Variance_mean=NA, R2=NA, p_value=NA)
+
+#loop through each scale
+set.seed(123)
+
+for(i in 1:length(scales)){
+  #extract landscape variables for the current scale
+  current_scale=paste0(scales[i], "m")
+  var_names=c(paste0("Broadleaf_", current_scale), paste0("Grassland_", current_scale))
+  scale_vars=beetle_env[, var_names]
+  
+  #calculate mean variance of landscape variables at this scale
+  scale_compare$Variance_mean[i]=mean(apply(scale_vars, 2, var))
+  
+  #run PERMANOVA for this specific scale
+  ad=adonis2(comm_hel~.,data=scale_vars, permutations=999, method="bray")
+  
+  #store R2 and p-value
+  scale_compare$R2[i]=round(ad$R2[1], 3)
+  scale_compare$p_value[i]=ad$`Pr(>F)`[1]}
+
+print(scale_compare)
+#result shows 250m is the optimal scale (R2=0.086 is highest)
