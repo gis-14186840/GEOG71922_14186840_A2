@@ -113,3 +113,35 @@ for(i in 1:length(scales)){
 
 print(scale_compare)
 #result shows 250m is the optimal scale (R2=0.086 is highest)
+
+
+#prepare explanatory matrices
+local_env=beetle_env[, c("pH", "Moist", "Elevation", "Management")]
+land_env=beetle_env[, c("Broadleaf_250m", "Grassland_250m")]
+space_env=as.data.frame(scale(beetle_env[, c("X", "Y")]))
+names(space_env)=c("X_scaled", "Y_scaled")
+
+#combine all explanatory variables
+all_env=cbind(local_env, land_env, space_env)
+
+#NMDS with envfit
+set.seed(123)
+nmds_res=metaMDS(comm_hel, distance="bray", k=2, trymax=100, autotransform=FALSE, trace=FALSE)
+
+#plot NMDS
+plot(nmds_res,type="n",main=paste("NMDS of Beetle Community Structure (Stress =",round(nmds_res$stress, 3),")"))
+points(nmds_res, display="sites", pch=21, bg="grey75", col="black", cex=1.2) 
+ef=envfit(nmds_res, all_env, permutations=999, na.rm=TRUE)
+plot(ef, p.max=0.05, col="blue", cex=0.8)
+
+#marginal PERMANOVA
+adonis_res=adonis2(comm_hel~pH+Moist+Elevation+Management+Broadleaf_250m+Grassland_250m+X_scaled+Y_scaled, 
+                     data=all_env, permutations=999, method="bray", by="margin")
+
+#print result
+print(adonis_res)
+
+#variation partitioning
+vp=varpart(comm_hel, local_env, land_env, space_env)
+plot(vp, Xnames=c("Local", "Landscape", "Space"), bg=c("cadetblue1", "lightpink", "lightgreen"))
+title("Variation Partitioning of Beetle Community")
