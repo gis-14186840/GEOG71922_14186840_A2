@@ -8,6 +8,9 @@ library(sf)
 library(vegan)
 library(dplyr)
 
+library(spdep)
+library(blockCV)
+
 #load data
 lcm_raster=rast("LCMUK_2000.tif")
 
@@ -112,7 +115,7 @@ for(i in 1:length(scales)){
   scale_compare$p_value[i]=ad$`Pr(>F)`[1]}
 
 print(scale_compare)
-#result shows 250m is the optimal scale (R2=0.086 is highest)
+#result shows 250m has the highest R2 among the tested scales
 
 
 #prepare explanatory matrices
@@ -145,3 +148,45 @@ print(adonis_res)
 vp=varpart(comm_hel, local_env, land_env, space_env)
 plot(vp, Xnames=c("Local", "Landscape", "Space"), bg=c("cadetblue1", "lightpink", "lightgreen"))
 title("Variation Partitioning of Beetle Community")
+
+
+#poisson GLM for species richness
+rich_model=glm(Richness~pH+Moist+Elevation+Management+Broadleaf_250m+Grassland_250m, 
+               family=poisson(link="log"), data=beetle_env)
+summary(rich_model)
+
+#check overdispersion
+dispersion=sum(residuals(rich_model,type="pearson")^2)/rich_model$df.residual
+print(dispersion)
+
+#Moran's I test on Pearson residuals
+#using k=8 to handle identical overlapping coordinates in dataset
+coords=cbind(beetle_env$X, beetle_env$Y)
+nb=suppressWarnings(knn2nb(knearneigh(coords, k=8)))
+lw=nb2listw(nb, style="W")
+moran_test=moran.test(residuals(rich_model, type="pearson"), lw)
+print(moran_test)
+
+#spatial block cross-validation
+set.seed(42)
+spatial_blocks=cv_spatial(x=beetle_sf, k=5, hexagon=TRUE, selection="random",
+                          plot=FALSE, progress=FALSE)
+
+#run spatial CV for richness model
+fold_ids=spatial_blocks$folds_ids
+nfolds=length(unique(fold_ids))
+cv_results=data.frame(fold=1:nfolds, RMSE=NA, MAE=NA)
+
+for(i in 1:nfolds){
+  train=beetle_env[fold_ids!=i, ]
+  test=beetle_env[fold_ids==i, ]
+  m_cv=glm(Richness~pH+Moist+Elevation+Management+Broadleaf_250m+Grassland_250m, 
+           family=poisson(link="log"), data=train)
+  pred=predict(m_cv, newdata=test, type="response")
+  cv_results$RMSE[i]=sqrt(mean((test$Richness-pred)^2))
+  cv_results$MAE[i]=mean(abs(test$Richness-pred))}
+
+#print results
+print(cv_results)
+print(paste("Mean spatial CV RMSE:", round(mean(cv_results$RMSE), 3)))
+print(paste("Mean spatial CV MAE:", round(mean(cv_results$MAE), 3)))
