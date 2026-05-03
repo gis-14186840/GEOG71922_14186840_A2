@@ -11,6 +11,9 @@ library(dplyr)
 library(spdep)
 library(blockCV)
 
+library(Hmsc)
+library(corrplot)
+
 #load data
 lcm_raster=rast("LCMUK_2000.tif")
 
@@ -190,3 +193,45 @@ for(i in 1:nfolds){
 print(cv_results)
 print(paste("Mean spatial CV RMSE:", round(mean(cv_results$RMSE), 3)))
 print(paste("Mean spatial CV MAE:", round(mean(cv_results$MAE), 3)))
+
+
+#prepare data for Hmsc (standardize predictors for MCMC convergence)
+Y=as.matrix(beetle_comm)
+storage.mode(Y)="numeric"
+XData=as.data.frame(scale(cbind(local_env, land_env)))
+XFormula=~pH+Moist+Elevation+Management+Broadleaf_250m+Grassland_250m
+
+#check species prevalence (informs discussion of rare-species warnings)
+prevalence=colSums(beetle_comm>0)
+print(paste("Species occurring at <5 sites:", sum(prevalence<5)))
+print(prevalence)
+
+#define site as random effect to account for residual co-occurrence
+studyDesign=data.frame(site=as.factor(beetle_env$Sites))
+rL=HmscRandomLevel(units=studyDesign$site)
+
+#construct JSDM with lognormal Poisson for abundance data
+m=Hmsc(Y=Y, XData=XData, XFormula=XFormula, 
+       studyDesign=studyDesign, ranLevels=list(site=rL), 
+       distr="lognormal poisson")
+
+#fit model with extended MCMC sampling for better convergence
+set.seed(123)
+m=sampleMcmc(m, samples=2000, thin=20, transient=1000, nChains=2, nParallel=2)
+
+#save fitted model to disk to avoid re-running MCMC
+saveRDS(m, "hmsc_model_refined.rds")
+
+#MCMC convergence diagnostics
+mpost=convertToCodaObject(m)
+ess_beta=effectiveSize(mpost$Beta)
+gd_beta=gelman.diag(mpost$Beta, multivariate=FALSE)$psrf[,1]
+ess_omega=effectiveSize(mpost$Omega[[1]])
+gd_omega=gelman.diag(mpost$Omega[[1]], multivariate=FALSE)$psrf[,1]
+
+#print results
+print(paste("Mean ESS (Beta):", round(mean(ess_beta), 1)))
+print(paste("Mean Gelman PSRF (Beta):", round(mean(gd_beta), 3)))
+print(paste("Mean ESS (Omega):", round(mean(ess_omega), 1)))
+print(paste("Mean Gelman PSRF (Omega):", round(mean(gd_omega), 3)))
+
