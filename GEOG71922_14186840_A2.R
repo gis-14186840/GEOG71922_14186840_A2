@@ -194,6 +194,9 @@ print(cv_results)
 print(paste("Mean spatial CV RMSE:", round(mean(cv_results$RMSE), 3)))
 print(paste("Mean spatial CV MAE:", round(mean(cv_results$MAE), 3)))
 
+print(paste("Richness mean:", round(mean(beetle_env$Richness), 2)))
+print(paste("Richness SD:", round(sd(beetle_env$Richness), 2)))
+print(paste("Richness range:", paste(range(beetle_env$Richness), collapse="-")))
 
 #prepare data for Hmsc (standardize predictors for MCMC convergence)
 Y=as.matrix(beetle_comm)
@@ -235,3 +238,36 @@ print(paste("Mean Gelman PSRF (Beta):", round(mean(gd_beta), 3)))
 print(paste("Mean ESS (Omega):", round(mean(ess_omega), 1)))
 print(paste("Mean Gelman PSRF (Omega):", round(mean(gd_omega), 3)))
 
+
+
+#explanatory power
+preds_expl=computePredictedValues(m)
+MF_expl=evaluateModelFit(hM=m, predY=preds_expl)
+print(paste("Mean explanatory SR2:", round(mean(MF_expl$SR2, na.rm=TRUE), 3)))
+
+#predictive power via spatial block CV
+preds_pred=computePredictedValues(m, partition=spatial_blocks$folds_ids)
+MF_pred=evaluateModelFit(hM=m, predY=preds_pred)
+print(paste("Mean predictive SR2 (spatial CV):", round(mean(MF_pred$SR2, na.rm=TRUE), 3)))
+
+#save predictions to avoid re-running spatial CV
+saveRDS(list(MF_expl=MF_expl, MF_pred=MF_pred), "hmsc_modelfit.rds")
+
+#variance partitioning across environmental groups
+VP=computeVariancePartitioning(m, group=c(1,1,1,1,1,2,2), 
+                               groupnames=c("Local (incl. intercept)","Landscape"))
+plotVariancePartitioning(m, VP=VP)
+
+#residual species co-occurrence matrix
+OmegaCor=computeAssociations(m)
+supportLevel=OmegaCor[[1]]$support
+corMatrix=OmegaCor[[1]]$mean
+
+#filter weak associations
+toPlot=corMatrix
+toPlot[supportLevel<0.97 & supportLevel>0.03]=0
+
+#plot residual species associations
+corrplot(toPlot, method="color", type="lower", tl.col="black", tl.cex=0.7, 
+         col=colorRampPalette(c("blue","white","red"))(200), 
+         title="Residual species associations", mar=c(0,0,2,0))
