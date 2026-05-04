@@ -39,6 +39,12 @@ beetle_env$Landcover=as.factor(lcm_extract[,2])
 beetle_env$Richness=rowSums(beetle_comm > 0)
 beetle_env$Shannon=diversity(beetle_comm, index="shannon")
 
+#plot richness distribution
+hist(beetle_env$Richness, breaks=10, col="grey80",
+     main="Distribution of beetle species richness",
+     xlab="Species richness per site")
+abline(v=mean(beetle_env$Richness), lwd=2, lty=2)
+
 #custom function from week 8 to calculate LCBD
 function_lcbd=function(spe1){
   ss_mat=spe1
@@ -152,7 +158,8 @@ print(adonis_res)
 
 #variation partitioning
 vp=varpart(comm_hel, local_env, land_env, space_env)
-plot(vp, Xnames=c("Local", "Landscape", "Space"), bg=c("cadetblue1", "lightpink", "lightgreen"))
+plot(vp, Xnames=c("Local", "Landscape", "Space"), bg=c("cadetblue1", "lightpink", "lightgreen"), 
+     digits=2)
 title("Variation Partitioning of Beetle Community")
 
 
@@ -177,6 +184,16 @@ print(moran_test)
 set.seed(42)
 spatial_blocks=cv_spatial(x=beetle_sf, k=5, hexagon=TRUE, selection="random",
                           plot=FALSE, progress=FALSE)
+
+#visualize spatial folds
+plot(lcm_raster, main="Spatial Cross-Validation Folds over Land Cover", legend=FALSE, axes=FALSE)
+fold_colors = c("red", "blue", "green", "yellow", "purple")
+plot(st_geometry(beetle_sf), 
+     col=fold_colors[as.numeric(spatial_blocks$folds_ids)], 
+     pch=19, cex=1.5, add=TRUE)
+legend("topright", legend=paste("Fold", 1:5), pch=19, 
+       col=fold_colors, cex=0.8, bg="white", xpd=TRUE)
+
 
 #run spatial CV for richness model
 fold_ids=spatial_blocks$folds_ids
