@@ -14,6 +14,9 @@ library(blockCV)
 library(Hmsc)
 library(corrplot)
 
+library(foreach)
+library(doParallel)
+
 #load data
 lcm_raster=rast("LCMUK_2000.tif")
 
@@ -220,7 +223,7 @@ m=Hmsc(Y=Y, XData=XData, XFormula=XFormula,
 
 #fit model with extended MCMC sampling for better convergence
 set.seed(123)
-m=sampleMcmc(m, samples=2000, thin=20, transient=1000, nChains=2, nParallel=2)
+m=sampleMcmc(m, samples=1000, thin=20, transient=1000, nChains=4, nParallel=4)
 
 #save fitted model to disk to avoid re-running MCMC
 saveRDS(m, "hmsc_model_refined.rds")
@@ -246,7 +249,18 @@ MF_expl=evaluateModelFit(hM=m, predY=preds_expl)
 print(paste("Mean explanatory SR2:", round(mean(MF_expl$SR2, na.rm=TRUE), 3)))
 
 #predictive power via spatial block CV
-preds_pred=computePredictedValues(m, partition=spatial_blocks$folds_ids)
+cl=makeCluster(5)
+registerDoParallel(cl)
+fold_predictions=foreach(i=1:5, .packages=c("Hmsc")) %dopar% {
+  computePredictedValues(m, partition=as.numeric(spatial_blocks$folds_ids==i), nParallel=1)}
+stopCluster(cl)
+
+#combine predictions from all folds into single array
+preds_pred=array(NA, dim=dim(preds_expl))
+for(i in 1:nfolds){
+  fold_idx=spatial_blocks$folds_ids==i
+  preds_pred[fold_idx,,]=fold_predictions[[i]][fold_idx,,]}
+
 MF_pred=evaluateModelFit(hM=m, predY=preds_pred)
 print(paste("Mean predictive SR2 (spatial CV):", round(mean(MF_pred$SR2, na.rm=TRUE), 3)))
 
@@ -265,7 +279,7 @@ corMatrix=OmegaCor[[1]]$mean
 
 #filter weak associations
 toPlot=corMatrix
-toPlot[supportLevel<0.97 & supportLevel>0.03]=0
+toPlot[supportLevel<0.95 & supportLevel>0.05]=0
 
 #plot residual species associations
 corrplot(toPlot, method="color", type="lower", tl.col="black", tl.cex=0.7, 
