@@ -225,9 +225,12 @@ print(paste("Random CV RMSE:", round(mean(cv_random),3),
 Y=as.matrix(beetle_comm)
 storage.mode(Y)="numeric"
 
-#scale all continuous predictors including Management
-XData=as.data.frame(scale(beetle_env[,c("pH","Moist","Elevation","Management",
-                                        "Broadleaf_250m","Grassland_250m")]))
+#scale continuous variables for MCMC convergence
+cont_vars=as.data.frame(scale(beetle_env[,c("pH","Moist","Elevation",
+                                            "Broadleaf_250m","Grassland_250m")]))
+
+#combine with Management as factor
+XData=data.frame(cont_vars, Management=as.factor(beetle_env$Management))
 XFormula=~pH+Moist+Elevation+Management+Broadleaf_250m+Grassland_250m
 
 #check species prevalence
