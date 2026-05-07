@@ -205,6 +205,19 @@ print(paste("Richness mean:", round(mean(beetle_env$Richness), 2)))
 print(paste("Richness SD:", round(sd(beetle_env$Richness), 2)))
 print(paste("Richness range:", paste(range(beetle_env$Richness), collapse="-")))
 
+#non-spatial CV baseline for comparison
+#Roberts et al. (2017): random CV inflates predictive performance under spatial autocorrelation
+set.seed(42)
+random_folds=sample(rep(1:nfolds, length.out=nrow(beetle_env)))
+cv_random=sapply(1:nfolds, function(i){
+  m_r=glm(Richness~pH+Moist+Elevation+Management+Broadleaf_250m+Grassland_250m,
+          family=quasipoisson(link="log"), data=beetle_env[random_folds!=i,])
+  pred=predict(m_r, newdata=beetle_env[random_folds==i,], type="response")
+  sqrt(mean((beetle_env$Richness[random_folds==i]-pred)^2))})
+print(paste("Random CV RMSE:", round(mean(cv_random),3),
+            "| Spatial CV RMSE:", round(mean(cv_results$RMSE),3),
+            "| spatial is", round((mean(cv_results$RMSE)/mean(cv_random)-1)*100,1), "% higher"))
+
 #prepare data for Hmsc
 #standardize continuous predictors only
 Y=as.matrix(beetle_comm)
