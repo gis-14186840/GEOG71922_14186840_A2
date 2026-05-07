@@ -150,7 +150,8 @@ print(round(coef(summary(lcbd_model))[,c(1,4)],3))
 
 #test residual spatial autocorrelation
 moran_lcbd=moran.test(residuals(lcbd_model), lw)
-print(c(test="LCBD", I=moran_lcbd$estimate[1], p=moran_lcbd$p.value))
+print(paste("Moran I (LCBD): I =", round(moran_lcbd$estimate[1],3),
+            "p =", round(moran_lcbd$p.value,3)))
 
 #poisson GLM for species richness
 rich_model=glm(Richness~pH+Moist+Elevation+Management+Broadleaf_250m+Grassland_250m, 
@@ -167,7 +168,8 @@ print(round(coef(summary(rich_model_qp))[,c(1,4)], 3))
 
 #residual spatial autocorrelation
 moran_rich=moran.test(residuals(rich_model, type="pearson"), lw)
-print(c(test="Richness", I=moran_rich$estimate[1], p=moran_rich$p.value))
+print(paste("Moran I (Richness): I =", round(moran_rich$estimate[1],3),
+            "p =", round(moran_rich$p.value,3)))
 
 #spatial block cross-validation
 set.seed(42)
@@ -223,12 +225,9 @@ print(paste("Random CV RMSE:", round(mean(cv_random),3),
 Y=as.matrix(beetle_comm)
 storage.mode(Y)="numeric"
 
-#scale continuous variables for MCMC convergence
-cont_vars=as.data.frame(scale(beetle_env[,c("pH","Moist","Elevation",
-                                            "Broadleaf_250m","Grassland_250m")]))
-
-#combine with Management as factor
-XData=data.frame(cont_vars, Management=as.factor(beetle_env$Management))
+#scale all continuous predictors including Management
+XData=as.data.frame(scale(beetle_env[,c("pH","Moist","Elevation","Management",
+                                        "Broadleaf_250m","Grassland_250m")]))
 XFormula=~pH+Moist+Elevation+Management+Broadleaf_250m+Grassland_250m
 
 #check species prevalence
