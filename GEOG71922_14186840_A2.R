@@ -127,7 +127,7 @@ adonis_res=adonis2(comm_hel~pH+Moist+Elevation+Management+Broadleaf_250m+Grassla
                      data=all_env, permutations=999, method="bray", by="margin")
 
 #print result
-print(as.matrix(adonis_res)[1:8, c("R2","F","Pr(>F)")])
+print(as.matrix(adonis_res)[seq_len(nrow(adonis_res)-2), c("R2","F","Pr(>F)")])
 
 #variation partitioning
 vp=varpart(comm_hel, local_env, land_env, space_env)
@@ -187,6 +187,11 @@ plot(st_geometry(beetle_sf),
 legend("topright", legend=paste("Fold", 1:5), pch=19, 
        col=fold_colors, cex=0.8, bg="white", xpd=TRUE)
 
+#check number of unique coordinate clusters
+coord_id=paste(beetle_env$X, beetle_env$Y, sep="_")
+n_coord=length(unique(coord_id))
+print(paste("Unique coordinate clusters:", n_coord))
+
 #run spatial CV for richness model
 cv_results=data.frame(fold=1:nfolds, RMSE=NA, MAE=NA)
 
@@ -219,7 +224,7 @@ cv_random=sapply(1:nfolds, function(i){
 cv_diff=(mean(cv_results$RMSE)/mean(cv_random)-1)*100
 print(paste("Random CV RMSE:", round(mean(cv_random),3),
             "Spatial CV RMSE:", round(mean(cv_results$RMSE),3),
-            "spatial is", abs(round(cv_diff,1)),ifelse(cv_diff>=0,"% higher","% lower")))
+            "spatial CV is", abs(round(cv_diff,1)),ifelse(cv_diff>=0,"% higher","% lower")))
 
 #prepare data for Hmsc
 #standardize continuous predictors only
@@ -288,7 +293,6 @@ if(file.exists(fit_file)){
   #explanatory power
   preds_expl=computePredictedValues(m)
   MF_expl=suppressWarnings(evaluateModelFit(hM=m, predY=preds_expl))
-  print(paste("Mean explanatory SR2:", round(mean(MF_expl$SR2, na.rm=TRUE), 3)))
 
   #predictive power via spatial block CV
   cl=makeCluster(5)
@@ -304,10 +308,13 @@ if(file.exists(fit_file)){
     preds_pred[idx,,]=fold_predictions[[i]][idx,,]}
 
   MF_pred=suppressWarnings(evaluateModelFit(hM=m, predY=preds_pred))
-  print(paste("Mean predictive SR2 (spatial CV):", round(mean(MF_pred$SR2, na.rm=TRUE), 3)))
 
   #save predictions to avoid re-running spatial CV
   saveRDS(list(MF_expl=MF_expl, MF_pred=MF_pred),fit_file)}
+
+#print model fit results
+print(paste("Mean explanatory SR2:", round(mean(MF_expl$SR2, na.rm=TRUE), 3)))
+print(paste("Mean predictive SR2 (spatial CV):", round(mean(MF_pred$SR2, na.rm=TRUE), 3)))
 
 #variance partitioning across environmental groups
 #suppress cor() SD=0 warnings from rare species with constant predicted means
@@ -324,14 +331,14 @@ corMatrix=OmegaCor[[1]]$mean
 
 #diagnostic across thresholds (used to justify the chosen support cut-off)
 diag_idx=lower.tri(supportLevel)
-n_strong=sum(supportLevel[diag_idx]>=0.95 , supportLevel[diag_idx]<=0.05)
-n_mod=sum(supportLevel[diag_idx]>=0.90 , supportLevel[diag_idx]<=0.10)
-n_weak=sum(supportLevel[diag_idx]>=0.85 , supportLevel[diag_idx]<=0.15)
+n_strong=sum(supportLevel[diag_idx]>=0.95 | supportLevel[diag_idx]<=0.05)
+n_mod=sum(supportLevel[diag_idx]>=0.90 | supportLevel[diag_idx]<=0.10)
+n_weak=sum(supportLevel[diag_idx]>=0.85 | supportLevel[diag_idx]<=0.15)
 print(paste("Associations:strong(>=0.95):",n_strong,"moderate(>=0.90):",n_mod,"weak(>=0.85):",n_weak))
 
 #filter weak associations
 toPlot=corMatrix
-toPlot[supportLevel<0.95 & supportLevel>0.05]=0
+toPlot[supportLevel<0.95 & supportLevel>0.05]=NA
 diag(toPlot)=NA
 
 #plot residual species associations
@@ -339,3 +346,45 @@ corrplot(toPlot, method="color", type="lower", diag=FALSE,
          na.label=" ", tl.col="black", tl.cex=0.7, 
          col=colorRampPalette(c("blue","white","red"))(200), 
          title="Residual species associations", mar=c(0,0,2,0))
+
+#sensitivity test: Management as continuous predictor
+run_sensitivity=TRUE
+
+if(run_sensitivity){
+  
+  #use continuous ordinal Management instead of factor
+  XData_cont=data.frame(cont_vars,
+                        Management=as.numeric(scale(beetle_env$Management)))
+  
+  m_cont=Hmsc(Y=Y, XData=XData_cont,
+              XFormula=~pH+Moist+Elevation+Management+Broadleaf_250m+Grassland_250m,
+              studyDesign=studyDesign, ranLevels=list(site=rL),
+              distr="lognormal poisson")
+  
+  model_cont_file="hmsc_model_management_continuous.rds"
+  
+  if(file.exists(model_cont_file)){
+    m_cont=readRDS(model_cont_file)
+    print("Loaded saved continuous Management Hmsc model")
+  }else{
+    set.seed(123)
+    m_cont=sampleMcmc(m_cont, samples=1000, thin=100, transient=10000,
+                      nChains=4, nParallel=4)
+    saveRDS(m_cont, model_cont_file)}
+  
+  #convergence diagnostics
+  mp_cont=convertToCodaObject(m_cont)
+  gd_beta_cont=gelman.diag(mp_cont$Beta, multivariate=FALSE)$psrf[,1]
+  print(paste("Sensitivity Beta PSRF:", round(mean(gd_beta_cont), 3)))
+  
+  #explanatory power
+  preds_cont=computePredictedValues(m_cont)
+  MF_cont=suppressWarnings(evaluateModelFit(hM=m_cont, predY=preds_cont))
+  print(paste("Sensitivity explanatory SR2:", round(mean(MF_cont$SR2, na.rm=TRUE), 3)))
+  
+  #residual associations
+  OC_cont=suppressWarnings(computeAssociations(m_cont))
+  support_cont=OC_cont[[1]]$support
+  idx=lower.tri(support_cont)
+  n95_cont=sum(support_cont[idx]>=0.95 , support_cont[idx]<=0.05)
+  print(paste("Sensitivity associations at >=0.95 support:", n95_cont))}
