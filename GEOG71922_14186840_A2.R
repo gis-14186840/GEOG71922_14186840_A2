@@ -216,9 +216,10 @@ cv_random=sapply(1:nfolds, function(i){
           family=quasipoisson(link="log"), data=beetle_env[random_folds!=i,])
   pred=predict(m_r, newdata=beetle_env[random_folds==i,], type="response")
   sqrt(mean((beetle_env$Richness[random_folds==i]-pred)^2))})
+cv_diff=(mean(cv_results$RMSE)/mean(cv_random)-1)*100
 print(paste("Random CV RMSE:", round(mean(cv_random),3),
-            "| Spatial CV RMSE:", round(mean(cv_results$RMSE),3),
-            "| spatial is", round((mean(cv_results$RMSE)/mean(cv_random)-1)*100,1), "% higher"))
+            "Spatial CV RMSE:", round(mean(cv_results$RMSE),3),
+            "spatial is", abs(round(cv_diff,1)),ifelse(cv_diff>=0,"% higher","% lower")))
 
 #prepare data for Hmsc
 #standardize continuous predictors only
@@ -250,11 +251,16 @@ m=Hmsc(Y=Y, XData=XData, XFormula=XFormula,
 #fit model with extended MCMC sampling
 #following Tikhonov et al. (2019): 4 chains, thin=100, transient=10000
 #total about 110000 iterations per chain, balances Omega convergence and compute
-set.seed(123)
-m=sampleMcmc(m, samples=1000, thin=100, transient=10000, nChains=4, nParallel=4)
+model_file="hmsc_model_refined.rds"
 
-#save fitted model to disk to avoid re-running MCMC
-saveRDS(m, "hmsc_model_refined.rds")
+if(file.exists(model_file)){
+  m=readRDS(model_file)
+  print("Loaded saved Hmsc model")
+  }else{
+  set.seed(123)
+     m=sampleMcmc(m, samples=1000, thin=100, transient=10000, nChains=4, nParallel=4)
+     #save fitted model to disk to avoid re-running MCMC
+     saveRDS(m, model_file)}
 
 #MCMC convergence diagnostics
 mpost=convertToCodaObject(m)
@@ -269,54 +275,67 @@ print(paste("Mean Gelman PSRF (Beta):", round(mean(gd_beta), 3)))
 print(paste("Mean ESS (Omega):", round(mean(ess_omega), 1)))
 print(paste("Mean Gelman PSRF (Omega):", round(mean(gd_omega), 3)))
 
-#explanatory power
-preds_expl=computePredictedValues(m)
-MF_expl=evaluateModelFit(hM=m, predY=preds_expl)
-print(paste("Mean explanatory SR2:", round(mean(MF_expl$SR2, na.rm=TRUE), 3)))
+#explanatory and predictive performance
+fit_file="hmsc_modelfit.rds"
 
-#predictive power via spatial block CV
-cl=makeCluster(5)
-registerDoParallel(cl)
-fold_predictions=foreach(i=1:nfolds, .packages=c("Hmsc")) %dopar% {
-  computePredictedValues(m, partition=as.numeric(fold_ids==i), nParallel=1)}
-stopCluster(cl)
+if(file.exists(fit_file)){
+  mf=readRDS(fit_file)
+  MF_expl=mf$MF_expl
+  MF_pred=mf$MF_pred
+  print("Loaded saved Hmsc model fit")
+}else{
 
-#combine predictions from all folds into single array
-preds_pred=array(NA, dim=dim(preds_expl))
-for(i in 1:nfolds){
-  idx=fold_ids==i
-  preds_pred[idx,,]=fold_predictions[[i]][idx,,]}
+  #explanatory power
+  preds_expl=computePredictedValues(m)
+  MF_expl=suppressWarnings(evaluateModelFit(hM=m, predY=preds_expl))
+  print(paste("Mean explanatory SR2:", round(mean(MF_expl$SR2, na.rm=TRUE), 3)))
 
-MF_pred=evaluateModelFit(hM=m, predY=preds_pred)
-print(paste("Mean predictive SR2 (spatial CV):", round(mean(MF_pred$SR2, na.rm=TRUE), 3)))
+  #predictive power via spatial block CV
+  cl=makeCluster(5)
+  registerDoParallel(cl)
+  fold_predictions=foreach(i=1:nfolds, .packages=c("Hmsc")) %dopar% {
+    computePredictedValues(m, partition=as.numeric(fold_ids==i), nParallel=1)}
+  stopCluster(cl)
+  
+  #combine predictions from all folds into single array
+  preds_pred=array(NA, dim=dim(preds_expl))
+  for(i in 1:nfolds){
+    idx=fold_ids==i
+    preds_pred[idx,,]=fold_predictions[[i]][idx,,]}
 
-#save predictions to avoid re-running spatial CV
-saveRDS(list(MF_expl=MF_expl, MF_pred=MF_pred), "hmsc_modelfit.rds")
+  MF_pred=suppressWarnings(evaluateModelFit(hM=m, predY=preds_pred))
+  print(paste("Mean predictive SR2 (spatial CV):", round(mean(MF_pred$SR2, na.rm=TRUE), 3)))
+
+  #save predictions to avoid re-running spatial CV
+  saveRDS(list(MF_expl=MF_expl, MF_pred=MF_pred),fit_file)}
 
 #variance partitioning across environmental groups
-VP=computeVariancePartitioning(m, group=c(1,1,1,1,1,2,2), 
-                               groupnames=c("Local (incl. intercept)","Landscape"))
+#suppress cor() SD=0 warnings from rare species with constant predicted means
+VP=suppressWarnings(computeVariancePartitioning(m, group=c(1,1,1,1,1,2,2),
+                                                groupnames=c("Local (incl. intercept)","Landscape")))
 
 #plot result
 plotVariancePartitioning(m,VP=VP,args.legend=list(x="bottomright",inset=c(0, 0.05),cex=0.8))
 
 #residual species co-occurrence matrix
-OmegaCor=computeAssociations(m)
+OmegaCor=suppressWarnings(computeAssociations(m))
 supportLevel=OmegaCor[[1]]$support
 corMatrix=OmegaCor[[1]]$mean
 
 #diagnostic across thresholds (used to justify the chosen support cut-off)
 diag_idx=lower.tri(supportLevel)
-n_strong=sum(supportLevel[diag_idx]>=0.95 | supportLevel[diag_idx]<=0.05)
-n_mod=sum(supportLevel[diag_idx]>=0.90 | supportLevel[diag_idx]<=0.10)
-n_weak=sum(supportLevel[diag_idx]>=0.85 | supportLevel[diag_idx]<=0.15)
+n_strong=sum(supportLevel[diag_idx]>=0.95 , supportLevel[diag_idx]<=0.05)
+n_mod=sum(supportLevel[diag_idx]>=0.90 , supportLevel[diag_idx]<=0.10)
+n_weak=sum(supportLevel[diag_idx]>=0.85 , supportLevel[diag_idx]<=0.15)
 print(paste("Associations:strong(>=0.95):",n_strong,"moderate(>=0.90):",n_mod,"weak(>=0.85):",n_weak))
 
 #filter weak associations
 toPlot=corMatrix
 toPlot[supportLevel<0.95 & supportLevel>0.05]=0
+diag(toPlot)=NA
 
 #plot residual species associations
-corrplot(toPlot, method="color", type="lower", tl.col="black", tl.cex=0.7, 
+corrplot(toPlot, method="color", type="lower", diag=FALSE,
+         na.label=" ", tl.col="black", tl.cex=0.7, 
          col=colorRampPalette(c("blue","white","red"))(200), 
          title="Residual species associations", mar=c(0,0,2,0))
